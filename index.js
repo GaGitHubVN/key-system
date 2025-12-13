@@ -7,7 +7,9 @@ app.use(cors());
 app.use(express.json());
 
 // Firebase init
-const serviceAccount = require("./serviceAccount.json");
+const serviceAccount = JSON.parse(
+  process.env.FIREBASE_SERVICE_ACCOUNT
+);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
