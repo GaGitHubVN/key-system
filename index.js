@@ -7,10 +7,10 @@ app.use(cors());
 app.use(express.json());
 
 /* =======================
-   FIREBASE INIT (ENV)
+   FIREBASE INIT
 ======================= */
 if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
-  console.error("❌ FIREBASE_SERVICE_ACCOUNT is missing");
+  console.error("❌ Missing FIREBASE_SERVICE_ACCOUNT env");
   process.exit(1);
 }
 
@@ -23,21 +23,27 @@ admin.initializeApp({
 const db = admin.firestore();
 
 /* =======================
-   ROOT ROUTE
+   ROOT (TEST SERVER)
 ======================= */
 app.get("/", (req, res) => {
-  res.send("✅ Key system is running");
+  res.json({
+    success: true,
+    message: "Key system server is running",
+  });
 });
 
 /* =======================
-   VERIFY KEY API
+   VERIFY KEY
    /verify?key=XXX&hwid=YYY
 ======================= */
 app.get("/verify", async (req, res) => {
   const { key, hwid } = req.query;
 
   if (!key || !hwid) {
-    return res.json({ success: false, message: "Thiếu key hoặc hwid" });
+    return res.json({
+      success: false,
+      message: "Thiếu key hoặc hwid",
+    });
   }
 
   try {
@@ -45,85 +51,110 @@ app.get("/verify", async (req, res) => {
     const snap = await ref.get();
 
     if (!snap.exists) {
-      return res.json({ success: false, message: "Key không tồn tại" });
+      return res.json({
+        success: false,
+        message: "Key không tồn tại",
+      });
     }
 
     const data = snap.data();
 
     if (data.banned === true) {
-      return res.json({ success: false, message: "Key đã bị khóa" });
+      return res.json({
+        success: false,
+        message: "Key đã bị khóa",
+      });
     }
 
     if (data.expireAt && data.expireAt.toDate() < new Date()) {
-      return res.json({ success: false, message: "Key đã hết hạn" });
-    }
-
-    if (!data.hwid) {
-      await ref.update({
-        hwid,
-        activatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      return res.json({
+        success: false,
+        message: "Key đã hết hạn",
       });
-      return res.json({ success: true, message: "Key kích hoạt thành công" });
     }
 
+    // Bind HWID lần đầu
+    if (!data.hwid) {
+      await ref.update({ hwid });
+      return res.json({
+        success: true,
+        message: "Key kích hoạt thành công",
+      });
+    }
+
+    // Sai HWID
     if (data.hwid !== hwid) {
-      return res.json({ success: false, message: "Sai HWID" });
+      return res.json({
+        success: false,
+        message: "Sai HWID",
+      });
     }
 
-    return res.json({ success: true, message: "Key hợp lệ" });
-
+    return res.json({
+      success: true,
+      message: "Key hợp lệ",
+    });
   } catch (err) {
-    console.error("VERIFY ERROR:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
+    console.error(err);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
   }
 });
 
 /* =======================
-   CREATE KEY API
-   POST /createKey
-   Body: { "key": "abc123", "expireDays": 7 }
+   ADMIN - CREATE KEY
+   /createKey?token=XXX&days=30
 ======================= */
-app.post("/createKey", async (req, res) => {
-  const { key, expireDays } = req.body;
+app.get("/createKey", async (req, res) => {
+  const { token, days } = req.query;
 
-  if (!key) {
-    return res.json({ success: false, message: "Thiếu key" });
+  if (token !== process.env.ADMIN_TOKEN) {
+    return res.status(403).json({
+      success: false,
+      message: "Unauthorized",
+    });
+  }
+
+  const key = Math.random()
+    .toString(36)
+    .substring(2, 12)
+    .toUpperCase();
+
+  let expireAt = null;
+  if (days) {
+    expireAt = admin.firestore.Timestamp.fromDate(
+      new Date(Date.now() + Number(days) * 24 * 60 * 60 * 1000)
+    );
   }
 
   try {
-    const ref = db.collection("keys").doc(key);
-    const snap = await ref.get();
-
-    if (snap.exists) {
-      return res.json({ success: false, message: "Key đã tồn tại" });
-    }
-
-    let expireAt = null;
-    if (expireDays) {
-      expireAt = new Date();
-      expireAt.setDate(expireAt.getDate() + expireDays);
-    }
-
-    await ref.set({
-      key,
-      banned: false,
-      expireAt: expireAt ? admin.firestore.Timestamp.fromDate(expireAt) : null,
+    await db.collection("keys").doc(key).set({
       hwid: null,
+      banned: false,
+      expireAt,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    return res.json({ success: true, message: "Key đã tạo thành công", key });
-
+    return res.json({
+      success: true,
+      key,
+      expireAt,
+    });
   } catch (err) {
-    console.error("CREATE KEY ERROR:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
+    console.error(err);
+    return res.status(500).json({
+      success: false,
+      message: "Cannot create key",
+    });
   }
 });
 
 /* =======================
-   START SERVER
+   START SERVER (RENDER)
 ======================= */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log("🚀 Server running on port", PORT);
+  console.log("✅ Server running on port", PORT);
 });
