@@ -10,7 +10,7 @@ app.use(express.json());
    FIREBASE INIT
 ======================= */
 if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
-  console.error("❌ Missing FIREBASE_SERVICE_ACCOUNT env");
+  console.error("❌ Missing FIREBASE_SERVICE_ACCOUNT");
   process.exit(1);
 }
 
@@ -23,7 +23,7 @@ admin.initializeApp({
 const db = admin.firestore();
 
 /* =======================
-   ROOT (TEST SERVER)
+   ROOT
 ======================= */
 app.get("/", (req, res) => {
   res.json({
@@ -152,7 +152,54 @@ app.get("/createKey", async (req, res) => {
 });
 
 /* =======================
-   START SERVER (RENDER)
+   ADMIN - RESET HWID
+   /resetHWID?token=XXX&key=YYY
+======================= */
+app.get("/resetHWID", async (req, res) => {
+  const { token, key } = req.query;
+
+  if (token !== process.env.ADMIN_TOKEN) {
+    return res.status(403).json({
+      success: false,
+      message: "Unauthorized",
+    });
+  }
+
+  if (!key) {
+    return res.json({
+      success: false,
+      message: "Thiếu key",
+    });
+  }
+
+  try {
+    const ref = db.collection("keys").doc(key);
+    const snap = await ref.get();
+
+    if (!snap.exists) {
+      return res.json({
+        success: false,
+        message: "Key không tồn tại",
+      });
+    }
+
+    await ref.update({ hwid: null });
+
+    return res.json({
+      success: true,
+      message: "Reset HWID thành công",
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+});
+
+/* =======================
+   START SERVER
 ======================= */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
