@@ -1,20 +1,16 @@
 const express = require("express");
 const admin = require("firebase-admin");
 const cors = require("cors");
+const crypto = require("crypto");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-/* =======================
-   FIREBASE INIT
-======================= */
-if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
-  console.error("❌ Missing FIREBASE_SERVICE_ACCOUNT");
-  process.exit(1);
-}
-
-const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+// ===== Firebase init =====
+const serviceAccount = JSON.parse(
+  process.env.FIREBASE_SERVICE_ACCOUNT
+);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -22,19 +18,26 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
-/* =======================
-   ROOT
-======================= */
+// ===== Helper =====
+function checkAdmin(req, res) {
+  const token = req.query.token;
+  if (!token || token !== process.env.ADMIN_TOKEN) {
+    res.status(403).json({ success: false, message: "Unauthorized" });
+    return false;
+  }
+  return true;
+}
+
+function genKey() {
+  return crypto.randomBytes(16).toString("hex").toUpperCase();
+}
+
+// ===== Root =====
 app.get("/", (req, res) => {
-  res.json({
-    success: true,
-    message: "Key system server is running",
-  });
+  res.send("Key System API is running");
 });
 
-/* =======================
-   VERIFY KEY
-======================= */
+// ===== VERIFY =====
 app.get("/verify", async (req, res) => {
   const { key, hwid } = req.query;
 
@@ -52,8 +55,8 @@ app.get("/verify", async (req, res) => {
 
     const data = snap.data();
 
-    if (data.banned === true) {
-      return res.json({ success: false, message: "Key đã bị khóa" });
+    if (data.banned) {
+      return res.json({ success: false, message: "Key đã bị ban" });
     }
 
     if (data.expireAt && data.expireAt.toDate() < new Date()) {
@@ -70,131 +73,83 @@ app.get("/verify", async (req, res) => {
     }
 
     return res.json({ success: true, message: "Key hợp lệ" });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ success: false, message: "Server error" });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-/* =======================
-   ADMIN - CREATE KEY
-======================= */
+// ===== CREATE KEY =====
 app.get("/createKey", async (req, res) => {
-  const { token, days } = req.query;
+  if (!checkAdmin(req, res)) return;
 
-  if (token !== process.env.ADMIN_TOKEN) {
-    return res.status(403).json({ success: false, message: "Unauthorized" });
-  }
+  const days = parseInt(req.query.days || "0");
+  const key = genKey();
 
-  const key = Math.random().toString(36).substring(2, 12).toUpperCase();
+  const data = {
+    hwid: null,
+    banned: false,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    expireAt: days > 0
+      ? admin.firestore.Timestamp.fromDate(
+          new Date(Date.now() + days * 86400000)
+        )
+      : null,
+  };
 
-  let expireAt = null;
-  if (days) {
-    expireAt = admin.firestore.Timestamp.fromDate(
-      new Date(Date.now() + Number(days) * 86400000)
-    );
-  }
-
-  try {
-    await db.collection("keys").doc(key).set({
-      hwid: null,
-      banned: false,
-      expireAt,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-
-    return res.json({ success: true, key, expireAt });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ success: false, message: "Cannot create key" });
-  }
+  await db.collection("keys").doc(key).set(data);
+  res.json({ success: true, key });
 });
 
-/* =======================
-   ADMIN - RESET HWID
-======================= */
-app.get("/resetHWID", async (req, res) => {
-  const { token, key } = req.query;
-
-  if (token !== process.env.ADMIN_TOKEN) {
-    return res.status(403).json({ success: false, message: "Unauthorized" });
-  }
-
-  try {
-    const ref = db.collection("keys").doc(key);
-    const snap = await ref.get();
-
-    if (!snap.exists) {
-      return res.json({ success: false, message: "Key không tồn tại" });
-    }
-
-    await ref.update({ hwid: null });
-
-    return res.json({ success: true, message: "Reset HWID thành công" });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
-/* =======================
-   ADMIN - BAN KEY
-======================= */
+// ===== BAN KEY =====
 app.get("/banKey", async (req, res) => {
-  const { token, key } = req.query;
+  if (!checkAdmin(req, res)) return;
 
-  if (token !== process.env.ADMIN_TOKEN) {
-    return res.status(403).json({ success: false, message: "Unauthorized" });
-  }
+  const { key } = req.query;
+  if (!key) return res.json({ success: false });
 
-  try {
-    const ref = db.collection("keys").doc(key);
-    const snap = await ref.get();
-
-    if (!snap.exists) {
-      return res.json({ success: false, message: "Key không tồn tại" });
-    }
-
-    await ref.update({ banned: true });
-
-    return res.json({ success: true, message: "Key đã bị ban" });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
+  await db.collection("keys").doc(key).update({ banned: true });
+  res.json({ success: true, message: "Key đã bị ban" });
 });
 
-/* =======================
-   ADMIN - UNBAN KEY
-======================= */
+// ===== UNBAN KEY =====
 app.get("/unbanKey", async (req, res) => {
-  const { token, key } = req.query;
+  if (!checkAdmin(req, res)) return;
 
-  if (token !== process.env.ADMIN_TOKEN) {
-    return res.status(403).json({ success: false, message: "Unauthorized" });
-  }
+  const { key } = req.query;
+  if (!key) return res.json({ success: false });
 
-  try {
-    const ref = db.collection("keys").doc(key);
-    const snap = await ref.get();
-
-    if (!snap.exists) {
-      return res.json({ success: false, message: "Key không tồn tại" });
-    }
-
-    await ref.update({ banned: false });
-
-    return res.json({ success: true, message: "Key đã được unban" });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
+  await db.collection("keys").doc(key).update({ banned: false });
+  res.json({ success: true, message: "Key đã được unban" });
 });
 
-/* =======================
-   START SERVER
-======================= */
+// ===== RESET HWID =====
+app.get("/resetHWID", async (req, res) => {
+  if (!checkAdmin(req, res)) return;
+
+  const { key } = req.query;
+  if (!key) return res.json({ success: false });
+
+  await db.collection("keys").doc(key).update({ hwid: null });
+  res.json({ success: true, message: "Reset HWID thành công" });
+});
+
+// ===== LIST KEYS (DASHBOARD) =====
+app.get("/listKeys", async (req, res) => {
+  if (!checkAdmin(req, res)) return;
+
+  const snap = await db.collection("keys").get();
+  const keys = [];
+
+  snap.forEach(doc => {
+    keys.push({ key: doc.id, ...doc.data() });
+  });
+
+  res.json({ success: true, keys });
+});
+
+// ===== START =====
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log("✅ Server running on port", PORT);
+  console.log("Key System running on port", PORT);
 });
