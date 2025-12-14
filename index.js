@@ -34,16 +34,12 @@ app.get("/", (req, res) => {
 
 /* =======================
    VERIFY KEY
-   /verify?key=XXX&hwid=YYY
 ======================= */
 app.get("/verify", async (req, res) => {
   const { key, hwid } = req.query;
 
   if (!key || !hwid) {
-    return res.json({
-      success: false,
-      message: "Thiếu key hoặc hwid",
-    });
+    return res.json({ success: false, message: "Thiếu key hoặc hwid" });
   }
 
   try {
@@ -51,81 +47,51 @@ app.get("/verify", async (req, res) => {
     const snap = await ref.get();
 
     if (!snap.exists) {
-      return res.json({
-        success: false,
-        message: "Key không tồn tại",
-      });
+      return res.json({ success: false, message: "Key không tồn tại" });
     }
 
     const data = snap.data();
 
     if (data.banned === true) {
-      return res.json({
-        success: false,
-        message: "Key đã bị khóa",
-      });
+      return res.json({ success: false, message: "Key đã bị khóa" });
     }
 
     if (data.expireAt && data.expireAt.toDate() < new Date()) {
-      return res.json({
-        success: false,
-        message: "Key đã hết hạn",
-      });
+      return res.json({ success: false, message: "Key đã hết hạn" });
     }
 
-    // Bind HWID lần đầu
     if (!data.hwid) {
       await ref.update({ hwid });
-      return res.json({
-        success: true,
-        message: "Key kích hoạt thành công",
-      });
+      return res.json({ success: true, message: "Key kích hoạt thành công" });
     }
 
-    // Sai HWID
     if (data.hwid !== hwid) {
-      return res.json({
-        success: false,
-        message: "Sai HWID",
-      });
+      return res.json({ success: false, message: "Sai HWID" });
     }
 
-    return res.json({
-      success: true,
-      message: "Key hợp lệ",
-    });
+    return res.json({ success: true, message: "Key hợp lệ" });
   } catch (err) {
     console.error(err);
-    return res.status(500).json({
-      success: false,
-      message: "Server error",
-    });
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
 /* =======================
    ADMIN - CREATE KEY
-   /createKey?token=XXX&days=30
 ======================= */
 app.get("/createKey", async (req, res) => {
   const { token, days } = req.query;
 
   if (token !== process.env.ADMIN_TOKEN) {
-    return res.status(403).json({
-      success: false,
-      message: "Unauthorized",
-    });
+    return res.status(403).json({ success: false, message: "Unauthorized" });
   }
 
-  const key = Math.random()
-    .toString(36)
-    .substring(2, 12)
-    .toUpperCase();
+  const key = Math.random().toString(36).substring(2, 12).toUpperCase();
 
   let expireAt = null;
   if (days) {
     expireAt = admin.firestore.Timestamp.fromDate(
-      new Date(Date.now() + Number(days) * 24 * 60 * 60 * 1000)
+      new Date(Date.now() + Number(days) * 86400000)
     );
   }
 
@@ -137,39 +103,21 @@ app.get("/createKey", async (req, res) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    return res.json({
-      success: true,
-      key,
-      expireAt,
-    });
+    return res.json({ success: true, key, expireAt });
   } catch (err) {
     console.error(err);
-    return res.status(500).json({
-      success: false,
-      message: "Cannot create key",
-    });
+    return res.status(500).json({ success: false, message: "Cannot create key" });
   }
 });
 
 /* =======================
    ADMIN - RESET HWID
-   /resetHWID?token=XXX&key=YYY
 ======================= */
 app.get("/resetHWID", async (req, res) => {
   const { token, key } = req.query;
 
   if (token !== process.env.ADMIN_TOKEN) {
-    return res.status(403).json({
-      success: false,
-      message: "Unauthorized",
-    });
-  }
-
-  if (!key) {
-    return res.json({
-      success: false,
-      message: "Thiếu key",
-    });
+    return res.status(403).json({ success: false, message: "Unauthorized" });
   }
 
   try {
@@ -177,24 +125,69 @@ app.get("/resetHWID", async (req, res) => {
     const snap = await ref.get();
 
     if (!snap.exists) {
-      return res.json({
-        success: false,
-        message: "Key không tồn tại",
-      });
+      return res.json({ success: false, message: "Key không tồn tại" });
     }
 
     await ref.update({ hwid: null });
 
-    return res.json({
-      success: true,
-      message: "Reset HWID thành công",
-    });
+    return res.json({ success: true, message: "Reset HWID thành công" });
   } catch (err) {
     console.error(err);
-    return res.status(500).json({
-      success: false,
-      message: "Server error",
-    });
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+/* =======================
+   ADMIN - BAN KEY
+======================= */
+app.get("/banKey", async (req, res) => {
+  const { token, key } = req.query;
+
+  if (token !== process.env.ADMIN_TOKEN) {
+    return res.status(403).json({ success: false, message: "Unauthorized" });
+  }
+
+  try {
+    const ref = db.collection("keys").doc(key);
+    const snap = await ref.get();
+
+    if (!snap.exists) {
+      return res.json({ success: false, message: "Key không tồn tại" });
+    }
+
+    await ref.update({ banned: true });
+
+    return res.json({ success: true, message: "Key đã bị ban" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+/* =======================
+   ADMIN - UNBAN KEY
+======================= */
+app.get("/unbanKey", async (req, res) => {
+  const { token, key } = req.query;
+
+  if (token !== process.env.ADMIN_TOKEN) {
+    return res.status(403).json({ success: false, message: "Unauthorized" });
+  }
+
+  try {
+    const ref = db.collection("keys").doc(key);
+    const snap = await ref.get();
+
+    if (!snap.exists) {
+      return res.json({ success: false, message: "Key không tồn tại" });
+    }
+
+    await ref.update({ banned: false });
+
+    return res.json({ success: true, message: "Key đã được unban" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
